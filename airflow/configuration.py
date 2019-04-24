@@ -16,11 +16,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 
 from base64 import b64encode
 from builtins import str
@@ -30,7 +25,6 @@ import errno
 from future import standard_library
 import os
 import shlex
-import six
 from six import iteritems
 import subprocess
 import sys
@@ -102,13 +96,8 @@ def run_command(command):
 def _read_default_config_file(file_name):
     templates_dir = os.path.join(os.path.dirname(__file__), 'config_templates')
     file_path = os.path.join(templates_dir, file_name)
-    if six.PY2:
-        with open(file_path) as f:
-            config = f.read()
-            return config.decode('utf-8')
-    else:
-        with open(file_path, encoding='utf-8') as f:
-            return f.read()
+    with open(file_path, encoding='utf-8') as f:
+        return f.read()
 
 
 DEFAULT_CONFIG = _read_default_config_file('default_airflow.cfg')
@@ -531,8 +520,6 @@ if not os.path.isfile(AIRFLOW_CONFIG):
     with open(AIRFLOW_CONFIG, 'w') as f:
         cfg = parameterized_config(DEFAULT_CONFIG)
         cfg = cfg.split(TEMPLATE_START)[-1].strip()
-        if six.PY2:
-            cfg = cfg.encode('utf8')
         f.write(cfg)
 
 log.info("Reading the config from %s", AIRFLOW_CONFIG)

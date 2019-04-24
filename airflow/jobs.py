@@ -16,11 +16,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 
 import getpass
 import logging
@@ -43,10 +38,11 @@ from sqlalchemy.orm.session import make_transient
 
 from airflow import configuration as conf
 from airflow import executors, models, settings
-from airflow.exceptions import AirflowException, NoAvailablePoolSlot, PoolNotFound
-from airflow.models import DAG, DagRun, errors
-from airflow.models.dagpickle import DagPickle
-from airflow.models.slamiss import SlaMiss
+from airflow.exceptions import (
+    AirflowException, NoAvailablePoolSlot, PoolNotFound, DagConcurrencyLimitReached,
+)
+
+from airflow.models import DAG, DagPickle, DagRun, errors, SlaMiss
 from airflow.stats import Stats
 from airflow.task.task_runner import get_task_runner
 from airflow.ti_deps.dep_context import DepContext, QUEUE_DEPS, RUN_DEPS
@@ -562,7 +558,7 @@ class SchedulerJob(BaseJob):
             definitions, or a specific path to a file
         :type subdir: unicode
         :param num_runs: The number of times to try to schedule each DAG file.
-            -1 for unlimited within the run_duration.
+            -1 for unlimited times.
         :type num_runs: int
         :param processor_poll_interval: The number of seconds to wait between
             polls of running processors
@@ -665,8 +661,7 @@ class SchedulerJob(BaseJob):
         slas = (
             session
             .query(SlaMiss)
-            .filter(SlaMiss.notification_sent == False)  # noqa: E712
-            .filter(SlaMiss.dag_id == dag.dag_id)
+            .filter(SlaMiss.notification_sent == False, SlaMiss.dag_id == dag.dag_id)  # noqa: E712
             .all()
         )
 
@@ -675,10 +670,11 @@ class SchedulerJob(BaseJob):
             qry = (
                 session
                 .query(TI)
-                .filter(TI.state != State.SUCCESS)
-                .filter(TI.execution_date.in_(sla_dates))
-                .filter(TI.dag_id == dag.dag_id)
-                .all()
+                .filter(
+                    TI.state != State.SUCCESS,
+                    TI.execution_date.in_(sla_dates),
+                    TI.dag_id == dag.dag_id
+                ).all()
             )
             blocking_tis = []
             for ti in qry:
@@ -723,7 +719,7 @@ class SchedulerJob(BaseJob):
                         emails |= set(get_email_address_list(task.email))
                     elif isinstance(task.email, (list, tuple)):
                         emails |= set(task.email)
-            if emails and len(slas):
+            if emails:
                 try:
                     send_email(
                         emails,
@@ -921,8 +917,8 @@ class SchedulerJob(BaseJob):
                 continue
 
             if len(active_dag_runs) >= dag.max_active_runs:
-                self.log.info("Active dag runs > max_active_run.")
-                continue
+                self.log.info("Number of active dag runs reached max_active_run.")
+                break
 
             # skip backfill dagruns for now as long as they are not really scheduled
             if run.is_backfill:
@@ -1428,18 +1424,24 @@ class SchedulerJob(BaseJob):
         """
         for dag in dags:
             dag = dagbag.get_dag(dag.dag_id)
-            if dag.is_paused:
-                self.log.info("Not processing DAG %s since it's paused", dag.dag_id)
-                continue
-
             if not dag:
                 self.log.error("DAG ID %s was not found in the DagBag", dag.dag_id)
+                continue
+
+            if dag.is_paused:
+                self.log.info("Not processing DAG %s since it's paused", dag.dag_id)
                 continue
 
             self.log.info("Processing %s", dag.dag_id)
 
             dag_run = self.create_dag_run(dag)
             if dag_run:
+                expected_start_date = dag.following_schedule(dag_run.execution_date)
+                if expected_start_date:
+                    schedule_delay = dag_run.start_date - expected_start_date
+                    Stats.timing(
+                        'dagrun.schedule_delay.{dag_id}'.format(dag_id=dag.dag_id),
+                        schedule_delay)
                 self.log.info("Created %s", dag_run)
             self._process_task_instances(dag, tis_out)
             self.manage_slas(dag)
@@ -2319,8 +2321,19 @@ class BackfillJob(BaseJob):
                                     "Not scheduling since there are no "
                                     "non_pooled_backfill_task_slot_count.")
                             non_pool_slots -= 1
+
+                        num_running_tasks = DAG.get_num_task_instances(
+                            self.dag_id,
+                            states=(State.QUEUED, State.RUNNING))
+
+                        if num_running_tasks >= self.dag.concurrency:
+                            raise DagConcurrencyLimitReached(
+                                "Not scheduling since concurrency limit "
+                                "is reached."
+                            )
+
                         _per_task_process(task, key, ti)
-            except NoAvailablePoolSlot as e:
+            except (NoAvailablePoolSlot, DagConcurrencyLimitReached) as e:
                 self.log.debug(e)
 
             # execute the tasks in the queue

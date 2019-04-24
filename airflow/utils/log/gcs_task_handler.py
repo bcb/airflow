@@ -18,10 +18,13 @@
 # under the License.
 import os
 
+from cached_property import cached_property
+from urllib.parse import urlparse
+
 from airflow import configuration
 from airflow.exceptions import AirflowException
-from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.log.file_task_handler import FileTaskHandler
+from airflow.utils.log.logging_mixin import LoggingMixin
 
 
 class GCSTaskHandler(FileTaskHandler, LoggingMixin):
@@ -39,7 +42,8 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
         self.closed = False
         self.upload_on_close = True
 
-    def _build_hook(self):
+    @cached_property
+    def hook(self):
         remote_conn_id = configuration.conf.get('core', 'REMOTE_LOG_CONN_ID')
         try:
             from airflow.contrib.hooks.gcs_hook import GoogleCloudStorageHook
@@ -52,12 +56,6 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
                 '"%s". %s\n\nPlease make sure that airflow[gcp] is installed '
                 'and the GCS connection exists.', remote_conn_id, str(e)
             )
-
-    @property
-    def hook(self):
-        if self._hook is None:
-            self._hook = self._build_hook()
-        return self._hook
 
     def set_context(self, ti):
         super(GCSTaskHandler, self).set_context(ti)
@@ -170,13 +168,6 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
         Given a Google Cloud Storage URL (gs://<bucket>/<blob>), returns a
         tuple containing the corresponding bucket and blob.
         """
-        # Python 3
-        try:
-            from urllib.parse import urlparse
-        # Python 2
-        except ImportError:
-            from urlparse import urlparse
-
         parsed_url = urlparse(gsurl)
         if not parsed_url.netloc:
             raise AirflowException('Please provide a bucket name')

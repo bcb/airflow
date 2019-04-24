@@ -160,10 +160,10 @@ class DataprocClusterCreateOperator(BaseOperator):
                  properties=None,
                  master_machine_type='n1-standard-4',
                  master_disk_type='pd-standard',
-                 master_disk_size=500,
+                 master_disk_size=1024,
                  worker_machine_type='n1-standard-4',
                  worker_disk_type='pd-standard',
-                 worker_disk_size=500,
+                 worker_disk_size=1024,
                  num_preemptible_workers=0,
                  labels=None,
                  region='global',
@@ -1279,8 +1279,8 @@ class DataProcPySparkOperator(BaseOperator):
         GoogleCloudStorageHook(
             google_cloud_storage_conn_id=self.gcp_conn_id
         ).upload(
-            bucket=bucket,
-            object=temp_filename,
+            bucket_name=bucket,
+            object_name=temp_filename,
             mime_type='application/x-python',
             filename=local_file
         )

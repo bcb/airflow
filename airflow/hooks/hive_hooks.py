@@ -17,8 +17,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from __future__ import print_function, unicode_literals
-
 import contextlib
 import os
 import re
@@ -27,10 +25,8 @@ import time
 from collections import OrderedDict
 from tempfile import NamedTemporaryFile
 
-import six
 import unicodecsv as csv
 from past.builtins import basestring
-from past.builtins import unicode
 from six.moves import zip
 
 from airflow import configuration
@@ -360,9 +356,7 @@ class HiveCliHook(BaseHook):
                     field_dict = _infer_field_types_from_df(df)
 
                 df.to_csv(path_or_buf=f,
-                          sep=(delimiter.encode(encoding)
-                               if six.PY2 and isinstance(delimiter, unicode)
-                               else delimiter),
+                          sep=delimiter,
                           header=False,
                           index=False,
                           encoding=encoding,
